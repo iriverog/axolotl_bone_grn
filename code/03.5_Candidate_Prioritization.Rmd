@@ -8,6 +8,7 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 knitr::opts_knit$set(root.dir = "~/NetVolumes/LAB_MT/RESULTADOS/Ines/Axolotl_Limb_Regeneration/")
+
 library(Seurat)
 library(ggplot2)
 library(dplyr)
@@ -121,7 +122,7 @@ df$Classification <- factor(df$Classification, levels = c("|Log2FC| < 0.25",
                                                           "|Log2FC| > 0.25, z-score not in top 25% genes",
                                                           "|Log2FC| < 0.25, z-score in top25% genes",
                                                           "|Log2FC| > 0.25 and z-score in top25% genes"))
-svg("Figures/ScatterPlot_Compare_Betweenness_Log2FC.svg", height = 6, width = 10)
+#svg("Figures/ScatterPlot_Compare_Betweenness_Log2FC.svg", height = 6, width = 10)
 ggplot() +
   geom_point(data = df, aes(x = CompareRanks_Zscore, y = avg_log2FC, color = Classification)) +
   geom_label_repel(data = df.zfilter.diffex[df.zfilter.diffex$IsTF == TRUE,], aes(label = Symbol, x = CompareRanks_Zscore, y = avg_log2FC),
@@ -131,7 +132,7 @@ ggplot() +
   theme(legend.position = "right") +
   ylab("Average log2FC") +
   xlab("Z-score(BetweennessCSD - BetweennessBL)")
-dev.off()
+#dev.off()
 ```
 ```{r save_candidate_table, echo=FALSE}
 write.table(df.zfilter.diffex, "Results/TENET_GRNI/SelectedCandidates_ZScoreBetweenness_Log2FC.tsv",
@@ -154,4 +155,61 @@ dev.off()
 svg("Figures/Tcf7l2_UMAP.svg", height = 3, width = 3)
 tcf7l2
 dev.off()
+```
+
+```{r update_plot_revision}
+# Make candidate plot more interpretable
+# Focus on top right and bottom left corners of scatter plot (highlighted in manuscript)
+# Top right: BL hubs, Bottom left: CSD hubs
+candidate_df_bl <- df.zfilter.diffex %>%
+  filter(IsTF == TRUE) %>%
+  filter(p_val_adj < 0.05) %>%
+  filter(CompareRanks_Zscore > 0 & avg_log2FC > 0) %>%
+  mutate(score = CompareRanks_Zscore * avg_log2FC,
+         grn = "BL") %>%
+  arrange(-score) %>%
+  head(n = 5)
+  
+
+candidate_df_csd <- df.zfilter.diffex %>%
+  filter(IsTF == TRUE) %>%
+  filter(p_val_adj < 0.05) %>%
+  filter(CompareRanks_Zscore < 0 & avg_log2FC < 0) %>%
+  mutate(score = CompareRanks_Zscore * avg_log2FC,
+         grn = "CSD") %>%
+  arrange(-score) %>%
+  head(n = 5)
+
+candidate_df_bl
+candidate_df_csd
+
+candidates_bl_plt <- ggplot(candidate_df_bl, aes(x = score, y = reorder(Symbol, score), fill = avg_log2FC)) +
+  geom_col(stat = "identity", color = "black", width = 0.75) + 
+  theme_bw() +
+  scale_fill_gradient(low = "white", high = "forestgreen", limits = c(0, 2)) +
+  labs(title = "Top 5 TF candidates in Blastema GRN",
+       x = "score",
+       y = "TF") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+
+candidates_csd_plt <- ggplot(candidate_df_csd, aes(x = score, y = reorder(Symbol, score), fill = avg_log2FC)) +
+  geom_bar(stat = "identity", color = "black", width = 0.75) + 
+  theme_bw() +
+  scale_fill_gradient(low = "hotpink3", high = "white", limits = c(-2, 0)) +
+  labs(title = "Top 5 TF candidates in CSD GRN",
+       x = "score",
+       y = "TF") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+pdf("Figures/Barplot_CandidateTFs_TENET_Blastema.pdf", height = 3, width = 4)
+candidates_bl_plt
+dev.off()
+
+pdf("Figures/Barplot_CandidateTFs_TENET_CSD.pdf", height = 3, width = 5)
+candidates_csd_plt
+dev.off()
+
+candidates_bl_plt
+candidates_csd_plt
 ```
