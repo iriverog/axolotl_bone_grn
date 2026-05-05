@@ -3,6 +3,10 @@ Figures/*
 Paper/*
 Raw.data/*
 Results/*
+.Rhistory
+._.Rhistory
+._README.md
+assets/._summary.png
 
 # Temporary code files
 code/99*
