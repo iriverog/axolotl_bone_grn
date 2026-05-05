@@ -2,9 +2,12 @@
 
 This repository contains the GRN analysis code for the preprint:
 
-> Polikarpova, A.<sup>*</sup>; Rivero-Garcia, I.<sup>*</sup>; Gerber, T.<sup>*</sup>; Wang, J.; Novatchkova, M.; Fischer, A.; Torres, M.; Sanchez-Cabo, F.<sup>#</sup>; Tanaka, E. M.<sup>#</sup> **Functional rescue of critical-size bone defect using molecular network analysis of axolotl limb regeneration.** bioRxiv, 2025. DOI: [10.64898/2025.12.10.692203](https://www.biorxiv.org/content/10.64898/2025.12.10.692203v4)
+> Polikarpova, A.<sup>*</sup>; Rivero-Garcia, I.<sup>*</sup>; Gerber, T.<sup>*</sup>; Wang, J.; Novatchkova, M.; Fischer, A.; Torres, M.; Sanchez-Cabo, F.<sup>#</sup>; Tanaka, E. M.<sup>#</sup>
+> **Functional rescue of critical-size bone defect using molecular network analysis of axolotl limb regeneration.**
+> bioRxiv, 2025. DOI: [10.64898/2025.12.10.692203](https://www.biorxiv.org/content/10.64898/2025.12.10.692203v4)
 >
-> <sup>*</sup>These authors contributed equally to this work. <sup>#</sup>Corresponding author.
+> <sup>*</sup>These authors contributed equally to this work. 
+> <sup>#</sup>Corresponding author.
 
 ## Overview
 
