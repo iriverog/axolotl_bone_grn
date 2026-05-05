@@ -5,8 +5,4 @@ Raw.data/*
 Results/*
 
 # Temporary code files
-code/99.3_collectri_gsea_8days.Rmd
-code/99.4_deseq2_bulk_11days.Rmd
-code/99.5_tf_targets_gsea_11days.Rmd
-code/99.6_collectri_gsea_11days.Rmd
-code/99.7_Compare_Ranks.Rmd
+code/99*
