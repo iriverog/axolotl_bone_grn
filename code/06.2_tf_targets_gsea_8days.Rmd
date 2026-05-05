@@ -1,0 +1,193 @@
+---
+title: "Enrichment of Lef1 and Tcf7l2 target genes in Bulk RNA-seq 8 days"
+output: html_document
+date: "2026-04-30"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/Volumes/INTENSO/PhD/axolotl_bone_grn/")
+# ~/NetVolumes/LAB_MT/RESULTADOS/Ines/Axolotl_Limb_Regeneration/
+
+library(dplyr)
+library(ggplot2)
+library(ComplexHeatmap)
+library(fgsea)
+
+# Color palette for conditions
+colors_conditions <- c("#7f7f7f", "forestgreen", "#EE6677", "#DDAA33")
+names(colors_conditions) <- c("CSD_ctrl", "Blastema_ctrl", "CSD_GFP_LNP", "CSD_Wnt3a_LNP")
+
+# Color palette for TFs
+colors_tf <- c("forestgreen", "hotpink3")
+names(colors_tf) <- c("LEF1_activity", "TCF7L2_activity")
+
+# Define directories
+results_dir <- "Results/bulk_8days/"
+figs_dir <- "Figures/bulk_8days/"
+```
+
+
+```{r load_targets}
+LEF1net <- read.csv("Results/CNNC/LEF1_TCF7L2_Modeling/BL3-LEF1_ConfidentInteractions.tsv", 
+                    header = TRUE, sep = "\t")
+TCF7L2net <- read.csv("Results/CNNC/LEF1_TCF7L2_Modeling/CSD3-TCF7L2_ConfidentInteractions.tsv",
+                      header = TRUE, sep = "\t")
+
+LEF1genes <- LEF1net$From # Target genes were saved as source but predictions are not directed
+TCF7L2genes <- TCF7L2net$From # Target genes were saved as source but predictions are not directed
+
+genesets <- list("LEF1" = setdiff(LEF1genes, TCF7L2genes),
+                 "TCF7L2" = setdiff(TCF7L2genes, LEF1genes),
+                 "Both" = intersect(LEF1genes, TCF7L2genes))
+sapply(genesets, length)
+```
+
+```{r load_logFCs}
+results_BLctrl_vs_CSDctrl <- read.csv("Results/bulk_8days/bulk_8day_deseq2_BLctrl_vs_CSDctrl.csv")
+results_CSDwnt_vs_CSDgfp <- read.csv("Results/bulk_8days/bulk_8day_deseq2_CSDwnt_vs_CSDgfp.csv")
+results_CSDwnt_vs_CSDctrl <- read.csv("Results/bulk_8days/bulk_8day_deseq2_CSDwnt_vs_CSDctrl.csv")
+results_CSDwnt_vs_BLctrl <- read.csv("Results/bulk_8days/bulk_8day_deseq2_CSDwnt_vs_BLctrl.csv")
+results_CSDgfp_vs_CSDctrl <- read.csv("Results/bulk_8days/bulk_8day_deseq2_CSDgfp_vs_CSDctrl.csv")
+results_CSDgfp_vs_BLctrl <- read.csv("Results/bulk_8days/bulk_8day_deseq2_CSDgfp_vs_BLctrl.csv")
+```
+
+```{r prepare_ranks}
+ranks_BLctr_vs_CSDctrl <- results_BLctrl_vs_CSDctrl$log2FoldChange.shrinkage
+ranks_CSDwnt_vs_CSDgfp <- results_CSDwnt_vs_CSDgfp$log2FoldChange.shrinkage
+ranks_CSDwnt_vs_CSDctrl <- results_CSDwnt_vs_CSDctrl$log2FoldChange.shrinkage
+ranks_CSDwnt_vs_BLctrl <- results_CSDwnt_vs_BLctrl$log2FoldChange.shrinkage
+ranks_CSDgfp_vs_CSDctrl <- results_CSDgfp_vs_CSDctrl$log2FoldChange.shrinkage
+ranks_CSDgfp_vs_BLctrl <- results_CSDgfp_vs_BLctrl$log2FoldChange.shrinkage
+
+names(ranks_BLctr_vs_CSDctrl) <- results_BLctrl_vs_CSDctrl$AMEXID
+names(ranks_CSDwnt_vs_CSDgfp) <- results_CSDwnt_vs_CSDgfp$AMEXID
+names(ranks_CSDwnt_vs_CSDctrl) <- results_CSDwnt_vs_CSDctrl$AMEXID
+names(ranks_CSDwnt_vs_BLctrl) <- results_CSDwnt_vs_BLctrl$AMEXID
+names(ranks_CSDgfp_vs_CSDctrl) <- results_CSDgfp_vs_CSDctrl$AMEXID
+names(ranks_CSDgfp_vs_BLctrl) <- results_CSDgfp_vs_BLctrl$AMEXID
+
+rank_list <- list("BLctr_vs_CSDctrl" = ranks_BLctr_vs_CSDctrl,
+                  "CSDwnt_vs_CSDgfp" = ranks_CSDwnt_vs_CSDgfp,
+                  "CSDwnt_vs_CSDctrl" = ranks_CSDwnt_vs_CSDctrl,
+                  "CSDwnt_vs_BLctrl" = ranks_CSDwnt_vs_BLctrl,
+                  "CSDgfp_vs_CSDctrl" = ranks_CSDgfp_vs_CSDctrl,
+                  "CSDgfp_vs_BLctrl" = ranks_CSDgfp_vs_BLctrl)
+
+rank_list <- lapply(rank_list, function(x) sort(x, decreasing = TRUE))
+head(rank_list[[1]])
+tail(rank_list[[1]])
+```
+
+```{r fgsea}
+results <- lapply(rank_list, function(x) fgsea(pathways = genesets, stats = x, minSize  = 10, maxSize  = 1300))
+results
+```
+
+```{r combine_results}
+combined_df <- bind_rows(
+  lapply(names(results), function(nm) {
+    results[[nm]] %>%
+      select(-leadingEdge) %>%
+      mutate(contrast = nm)
+  })
+)
+combined_df$pathway <- paste0(combined_df$pathway, "_activity")
+combined_df <- combined_df %>% select(c(contrast, pathway, ES, NES, log2err, padj, pval))
+combined_df
+```
+
+```{r save_results}
+write.csv(combined_df, file = paste0(results_dir, "bulk_8days_fgsea_lef1_tcf7l2_footprints.csv"), row.names = FALSE, quote = FALSE)
+```
+```{r visualise}
+combined_df$significant <- ifelse(combined_df$padj < 0.05, "padj < 0.05", "ns")
+combined_df <- combined_df %>%
+  group_by(contrast) %>%
+  mutate(
+    signature_group = case_when(
+      all(padj > 0.05) ~ "Not significant",
+      NES[pathway == "LEF1_activity"] > 0 & NES[pathway == "TCF7L2_activity"] < 0 ~ "BL-like",
+      NES[pathway == "LEF1_activity"] < 0 & NES[pathway == "TCF7L2_activity"] > 0 ~ "CSD-like",
+      TRUE ~ "Other"
+    )
+  ) %>%
+  ungroup()
+
+combined_df <- combined_df %>%
+  mutate(
+    sig_label = ifelse(padj < 0.05, "*", ""),
+    label_y = NES + ifelse(NES > 0, 0.1, -0.2)  # adjust offset as needed
+  )
+
+nes_bplot <- ggplot(combined_df, aes(x = contrast, y = NES, fill = pathway)) +
+  geom_col(position = position_dodge(), width = 0.5) +
+  geom_text(aes(y = label_y, label = sig_label), position = position_dodge(width = 0.5),
+    size = 5
+  ) +
+  facet_wrap(~ signature_group, scales = "free_x") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  scale_fill_manual(values = c("LEF1_activity" = "forestgreen", "TCF7L2_activity" = "hotpink3")) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+pdf(paste0(figs_dir, "bulk_8days_fgsea_nes_barplot.pdf"), height = 4, width = 6)
+nes_bplot
+dev.off()
+
+nes_bplot
+```
+
+```{r pca_ranks}
+pca <- readRDS("Results/bulk_8days/bulk_8days_pca.rds")
+pca_weights <- pca$rotation
+
+ranks_pc1 <- pca_weights[,"PC1"]
+names(ranks_pc1) <- rownames(pca_weights)
+
+ranks_pc2 <- pca_weights[,"PC2"]
+names(ranks_pc2) <- rownames(pca_weights)
+
+pca_ranks <- list("PC1" = sort(ranks_pc1, decreasing = TRUE),
+                  "PC2" = sort(ranks_pc2, decreasing = TRUE))
+```
+```{r pca_fgsea}
+results_pca <- lapply(pca_ranks, function(x) fgsea(pathways = genesets[1:2], stats = x, minSize  = 5, maxSize  = 1300))
+results_pca
+```
+```{r combine_results}
+pca_df <- bind_rows(
+  lapply(names(results_pca), function(nm) {
+    results_pca[[nm]] %>%
+      select(-leadingEdge) %>%
+      mutate(PC = nm)
+  })
+)
+pca_df$pathway <- paste0(pca_df$pathway, "_activity")
+pca_df <- pca_df %>% select(c(PC, pathway, ES, NES, log2err, padj, pval))
+pca_df
+```
+```{r barplot_pca}
+pca_df$significant <- ifelse(pca_df$padj < 0.05, "padj < 0.05", "ns")
+pca_df <- pca_df %>%
+  mutate(
+    sig_label = ifelse(padj < 0.05, "*", ""),
+    label_y = NES + ifelse(NES > 0, 0.1, -0.2)  # adjust offset as needed
+  )
+
+
+pca_bplot <- ggplot(pca_df, aes(x = PC, y = NES, fill = pathway)) +
+  geom_col(position = position_dodge(), width = 0.5) +
+  geom_text(aes(y = label_y, label = sig_label), position = position_dodge(width = 0.5),
+    size = 5
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  scale_fill_manual(values = c("LEF1_activity" = "forestgreen", "TCF7L2_activity" = "hotpink3")) +
+  theme_bw() 
+
+pdf(paste0(figs_dir, "bulk_8days_pca_fgsea_nes_barplot.pdf"), height = 3, width = 4)
+pca_bplot
+dev.off()
+
+pca_bplot
+```

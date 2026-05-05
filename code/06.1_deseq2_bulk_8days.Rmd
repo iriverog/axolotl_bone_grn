@@ -1,0 +1,489 @@
+---
+title: "Differential expression analysis, 8days"
+output: html_document
+date: "2026-04-30"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "~/NetVolumes/LAB_MT/RESULTADOS/Ines/Axolotl_Limb_Regeneration/") 
+
+library(RColorBrewer)
+library(dplyr)
+library(DESeq2)
+library(ggplot2)
+library(circlize)
+library(ComplexHeatmap)
+library(ggrepel)
+library(fgsea)
+
+# Color palette for samples
+colors_conditions <- c("#7f7f7f", "forestgreen", "#EE6677", "#DDAA33")
+names(colors_conditions) <- c("CSD_ctrl", "Blastema_ctrl", "CSD_GFP_LNP", "CSD_Wnt3a_LNP")
+
+# Color palette for inter-sample distance heatmap
+colors_distances <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+
+# Define directories
+results_dir <- "Results/bulk_8days/"
+figs_dir <- "Figures/bulk_8days/"
+```
+
+```{r load_data}
+data <- read.delim("Raw.data/bulk_8days_countmatrix.tsv")
+
+rownames(data) <- data$gene_id
+data <- data %>% select(-gene_id)
+head(data)
+```
+
+
+```{r prepare_metadata}
+metadata <- read.csv("Raw.data/bulk_8days_metadata.csv")
+rownames(metadata) <- metadata$sample_id
+identical(rownames(metadata), colnames(data))
+metadata <- metadata
+metadata
+```
+
+
+# PCA and sample clustering
+```{r prepare_DDSobjects}
+# Prepare gene info
+gene_annotation <- read.delim("Raw.data/AnnotationFile_AmexG_v6_chr_unscaffolded_CherryGFP_Ines.tsv")
+
+# Full name, human homologue
+geneInfo <- gene_annotation %>% filter(AMEXID %in% rownames(data))
+rownames(geneInfo) <- geneInfo$AMEXID
+
+# Create DESeq objects
+dds <- DESeqDataSetFromMatrix(countData = data,
+                              colData = metadata,
+                              design = ~ condition) 
+
+# Adding gene info.
+mcols(dds) <- DataFrame(mcols(dds), geneInfo)
+
+dds
+
+# Pre-filtering to speed things up. At least 3 samples with more than 10 counts.
+keep <- rowSums(counts(dds) >= 10) >= 3
+dds <- dds[keep,]
+
+dds
+
+# VST normalization
+vsd <- vst(dds)
+```
+```{r most_variable_genes}
+gene_vars <- matrixStats::rowVars(assay(vsd))
+gene_vars <- names(sort(gene_vars, decreasing = TRUE))
+
+which(gene_vars == "AMEX60DD044502")
+which(gene_vars == "AMEX60DD053152")
+```
+
+```{r run_pca}
+top_genes <- gene_vars[1:500]
+pca <- prcomp(t(assay(vsd)[top_genes, ]), scale. = FALSE)
+
+pca_weights <- pca$rotation
+
+pca_weights_lef1 <- pca_weights["AMEX60DD044502",]
+pca_weights_lef1
+
+pca_weights_pc1 <- names(sort(pca_weights[,"PC1"], decreasing = TRUE))
+pca_weights_pc2 <- names(sort(pca_weights[,"PC2"], decreasing = FALSE)) # We want negative weights first because BL and CSDwnt have negative PC2 values.
+
+which(pca_weights_pc1 == "AMEX60DD044502")
+which(pca_weights_pc2 == "AMEX60DD044502")
+```
+```{r visualise_pca}
+pca_df <- as.data.frame(pca$x)
+pca_df$sample_id <- rownames(pca_df)
+pca_df <- merge(pca_df, metadata, by ="sample_id")
+pca_df
+
+pca_plt <- ggplot(pca_df, aes(x = PC1, y = PC2, color = condition)) +
+  geom_point(size = 3) + 
+  theme_bw() +
+  scale_color_manual(values = colors_conditions) +
+  ggtitle("PCA") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+pdf(paste0(figs_dir, "bulk_8days_pca.pdf"), height = 3, width = 4)
+pca_plt
+dev.off()
+
+pca_plt
+```
+```{r associate_pc_conditions}
+# PC1
+fit_pc1 <- aov(PC1 ~ condition, data = pca_df)
+summary(fit_pc1)
+TukeyHSD(fit_pc1)
+
+# PC2
+fit_pc2 <- aov(PC2 ~ condition, data = pca_df)
+summary(fit_pc2)
+TukeyHSD(fit_pc2)
+
+pc1_plt <- ggplot(pca_df, aes(x = condition, y = PC1, fill = condition)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.15, size = 2) +
+  theme_bw() +
+  ggtitle("PC1") +
+  scale_fill_manual(values = colors_conditions) +
+  theme(legend.position = "none")
+
+pc2_plt <- ggplot(pca_df, aes(x = condition, y = PC2, fill = condition)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.15, size = 2) +
+  theme_bw()  +
+  ggtitle("PC2") +
+  scale_fill_manual(values = colors_conditions) +
+  theme(legend.position = "none")
+
+pdf(paste0(figs_dir, "bulk_8days_boxplot_pc1.pdf"), height = 3, width = 4)
+pc1_plt
+dev.off()
+
+pdf(paste0(figs_dir, "bulk_8days_boxplot_pc2.pdf"), height = 3, width = 4)
+pc2_plt
+dev.off()
+
+pc1_plt
+pc2_plt
+```
+```{r save_pca}
+saveRDS(pca, paste0(results_dir, "bulk_8days_pca.rds"))
+```
+
+```{r sample_clustering}
+sampleDists.vsd <- dist(t(assay(vsd)), method = "euclidean")
+
+sampleDistMatrix.vsd <- as.matrix(sampleDists.vsd)
+
+# Column annotation
+ha <- HeatmapAnnotation(Condition = metadata$condition,
+                        col = list(Condition = colors_conditions)
+)
+
+heatmap <- Heatmap(sampleDistMatrix.vsd,
+        name = "Euclidean\ndistance",
+        top_annotation = ha,
+        column_title = "VST normalised counts",
+        col = colorRamp2(seq(min(sampleDistMatrix.vsd), max(sampleDistMatrix.vsd), length.out = length(colors_distances)), colors_distances),
+        cluster_rows = as.dendrogram(hclust(sampleDists.vsd)),
+        cluster_columns =  as.dendrogram(hclust(sampleDists.vsd)))
+
+pdf(paste0(figs_dir, "bulk_8days_sample-distance_hmap.pdf"), height = 3.5, width = 4.5)
+heatmap
+dev.off()
+
+heatmap
+```
+
+
+# Differential expression analysis
+```{r deseq2_BLctr_CSDctrl}
+# Set GFP as reference
+dds$condition <- relevel(dds$condition, ref = "CSD_ctrl")
+
+dds <- DESeq(dds)
+
+res.BLctrl.CSDctrl <- results(dds, contrast = c("condition", "Blastema_ctrl", "CSD_ctrl"), alpha = 0.05)
+summary(res.BLctrl.CSDctrl)
+
+# Log2FC shrinkage for plotting and ranking
+resLFC.BLctrl.CSDctrl <- lfcShrink(dds, coef="condition_Blastema_ctrl_vs_CSD_ctrl", type="apeglm")
+
+# MA plots
+plotMA(resLFC.BLctrl.CSDctrl, ylim=c(-5,5), main = "Blastema ctrl vs CSD ctrl")
+
+# pval hist
+hist(res.BLctrl.CSDctrl[res.BLctrl.CSDctrl$baseMean > 1, "pvalue"], main = "P-value histogram Blastema ctrl vs CSD ctrl", xlab = "p-value")
+
+# Save results
+res.BLctrl.CSDctrl$AMEXID <- rownames(res.BLctrl.CSDctrl)
+resLFC.BLctrl.CSDctrl$AMEXID <- rownames(resLFC.BLctrl.CSDctrl)
+results.BLctr.CSDctrl <- merge(as.data.frame(res.BLctrl.CSDctrl), as.data.frame(resLFC.BLctrl.CSDctrl)[, c("AMEXID", "log2FoldChange")], by = c("AMEXID"))
+results.BLctr.CSDctrl <- merge(results.BLctr.CSDctrl, gene_annotation, by = "AMEXID", all.x = TRUE)
+colnames(results.BLctr.CSDctrl) <- c("AMEXID", "baseMean", "log2FoldChange", "lfcSE", "stat", "pvalue", "padj", "log2FoldChange.shrinkage", "Symbol")
+results.BLctr.CSDctrl <- results.BLctr.CSDctrl[, c("AMEXID", "Symbol", "baseMean", "log2FoldChange", "lfcSE", "log2FoldChange.shrinkage", "stat", "pvalue", "padj")]
+write.csv(x = results.BLctr.CSDctrl, file = paste0(results_dir, "bulk_8day_deseq2_BLctrl_vs_CSDctrl.csv"), quote = FALSE, row.names = FALSE, col.names = TRUE)
+```
+```{r deseq2_CSDwnt_CSDgfp}
+# Set GFP as reference
+dds$condition <- relevel(dds$condition, ref = "CSD_GFP_LNP")
+
+dds <- DESeq(dds)
+
+res.CSDwnt.CSDgfp <- results(dds, contrast = c("condition", "CSD_Wnt3a_LNP", "CSD_GFP_LNP"), alpha = 0.05)
+summary(res.CSDwnt.CSDgfp)
+
+# Log2FC shrinkage for plotting and ranking
+resLFC.CSDwnt.CSDgfp <- lfcShrink(dds, coef="condition_CSD_Wnt3a_LNP_vs_CSD_GFP_LNP", type="apeglm")
+
+# MA plots
+plotMA(resLFC.CSDwnt.CSDgfp, ylim=c(-5,5), main = "CSD Wnt3a-LNP ctrl vs CSD GFP-LNP")
+
+# pval hist
+hist(resLFC.CSDwnt.CSDgfp[resLFC.CSDwnt.CSDgfp$baseMean > 1, "pvalue"], main = "P-value histogram CSD Wnt3a-Lnp ctrl vs CSD GFP-LNP", xlab = "p-value")
+
+# Save results
+res.CSDwnt.CSDgfp$AMEXID <- rownames(res.CSDwnt.CSDgfp)
+resLFC.CSDwnt.CSDgfp$AMEXID <- rownames(resLFC.CSDwnt.CSDgfp)
+results.CSDwnt.CSDgfp <- merge(as.data.frame(res.CSDwnt.CSDgfp), as.data.frame(resLFC.CSDwnt.CSDgfp)[, c("AMEXID", "log2FoldChange")], by = c("AMEXID"))
+results.CSDwnt.CSDgfp <- merge(results.CSDwnt.CSDgfp, gene_annotation, by = "AMEXID", all.x = TRUE)
+colnames(results.CSDwnt.CSDgfp) <- c("AMEXID", "baseMean", "log2FoldChange", "lfcSE", "stat", "pvalue", "padj", "log2FoldChange.shrinkage", "Symbol")
+results.CSDwnt.CSDgfp <- results.CSDwnt.CSDgfp[, c("AMEXID", "Symbol", "baseMean", "log2FoldChange", "lfcSE", "log2FoldChange.shrinkage", "stat", "pvalue", "padj")]
+write.csv(x = results.CSDwnt.CSDgfp, file = paste0(results_dir, "bulk_8day_deseq2_CSDwnt_vs_CSDgfp.csv"), quote = FALSE, row.names = FALSE, col.names = TRUE)
+```
+```{r deseq2_CSDwnt_CSDctrl}
+# Set GFP as reference
+dds$condition <- relevel(dds$condition, ref = "CSD_ctrl")
+
+dds <- DESeq(dds)
+
+res.CSDwnt.CSDctrl <- results(dds, contrast = c("condition", "CSD_Wnt3a_LNP", "CSD_ctrl"), alpha = 0.05)
+summary(res.CSDwnt.CSDctrl)
+
+# Log2FC shrinkage for plotting and ranking
+resLFC.CSDwnt.CSDctrl <- lfcShrink(dds, coef="condition_CSD_Wnt3a_LNP_vs_CSD_ctrl", type="apeglm")
+
+# MA plots
+plotMA(resLFC.CSDwnt.CSDctrl, ylim=c(-5,5), main = "CSD Wnt3a-LNP ctrl vs CSD ctrl")
+
+# pval hist
+hist(resLFC.CSDwnt.CSDctrl[resLFC.CSDwnt.CSDctrl$baseMean > 1, "pvalue"], main = "P-value histogram CSD Wnt3a-Lnp ctrl vs CSD ctrl", xlab = "p-value")
+
+# Save results
+res.CSDwnt.CSDctrl$AMEXID <- rownames(res.CSDwnt.CSDctrl)
+resLFC.CSDwnt.CSDctrl$AMEXID <- rownames(resLFC.CSDwnt.CSDctrl)
+results.CSDwnt.CSDctrl <- merge(as.data.frame(res.CSDwnt.CSDctrl), as.data.frame(resLFC.CSDwnt.CSDctrl)[, c("AMEXID", "log2FoldChange")], by = c("AMEXID"))
+results.CSDwnt.CSDctrl <- merge(results.CSDwnt.CSDctrl, gene_annotation, by = "AMEXID", all.x = TRUE)
+colnames(results.CSDwnt.CSDctrl) <- c("AMEXID", "baseMean", "log2FoldChange", "lfcSE", "stat", "pvalue", "padj", "log2FoldChange.shrinkage", "Symbol")
+results.CSDwnt.CSDctrl <- results.CSDwnt.CSDctrl[, c("AMEXID", "Symbol", "baseMean", "log2FoldChange", "lfcSE", "log2FoldChange.shrinkage", "stat", "pvalue", "padj")]
+write.csv(x = results.CSDwnt.CSDctrl, file = paste0(results_dir, "bulk_8day_deseq2_CSDwnt_vs_CSDctrl.csv"), quote = FALSE, row.names = FALSE, col.names = TRUE)
+```
+```{r deseq2_CSDwnt_BLctrl}
+# Set GFP as reference
+dds$condition <- relevel(dds$condition, ref = "Blastema_ctrl")
+
+dds <- DESeq(dds)
+
+res.CSDwnt.BLctrl <- results(dds, contrast = c("condition", "CSD_Wnt3a_LNP", "Blastema_ctrl"), alpha = 0.05)
+summary(res.CSDwnt.BLctrl)
+
+# Log2FC shrinkage for plotting and ranking
+resLFC.CSDwnt.BLctrl <- lfcShrink(dds, coef="condition_CSD_Wnt3a_LNP_vs_Blastema_ctrl", type="apeglm")
+
+# MA plots
+plotMA(resLFC.CSDwnt.BLctrl, ylim=c(-5,5), main = "CSD Wnt3a-LNP ctrl vs Blastema ctrl")
+
+# pval hist
+hist(resLFC.CSDwnt.BLctrl[resLFC.CSDwnt.BLctrl$baseMean > 1, "pvalue"], main = "P-value histogram CSD Wnt3a-Lnp ctrl vs Blastema ctrl", xlab = "p-value")
+
+# Save results
+res.CSDwnt.BLctrl$AMEXID <- rownames(res.CSDwnt.BLctrl)
+resLFC.CSDwnt.BLctrl$AMEXID <- rownames(resLFC.CSDwnt.BLctrl)
+results.CSDwnt.BLctrl <- merge(as.data.frame(res.CSDwnt.BLctrl), as.data.frame(resLFC.CSDwnt.BLctrl)[, c("AMEXID", "log2FoldChange")], by = c("AMEXID"))
+results.CSDwnt.BLctrl <- merge(results.CSDwnt.BLctrl, gene_annotation, by = "AMEXID", all.x = TRUE)
+colnames(results.CSDwnt.BLctrl) <- c("AMEXID", "baseMean", "log2FoldChange", "lfcSE", "stat", "pvalue", "padj", "log2FoldChange.shrinkage", "Symbol")
+results.CSDwnt.BLctrl <- results.CSDwnt.BLctrl[, c("AMEXID", "Symbol", "baseMean", "log2FoldChange", "lfcSE", "log2FoldChange.shrinkage", "stat", "pvalue", "padj")]
+write.csv(x = results.CSDwnt.BLctrl, file = paste0(results_dir, "bulk_8day_deseq2_CSDwnt_vs_BLctrl.csv"), quote = FALSE, row.names = FALSE, col.names = TRUE)
+```
+
+```{r deseq2_CSDgfp_CSDctrl}
+# Set GFP as reference
+dds$condition <- relevel(dds$condition, ref = "CSD_ctrl")
+
+dds <- DESeq(dds)
+
+res.CSDgfp.CSDctrl <- results(dds, contrast = c("condition", "CSD_GFP_LNP", "CSD_ctrl"), alpha = 0.05)
+summary(res.CSDgfp.CSDctrl)
+
+# Log2FC shrinkage for plotting and ranking
+resLFC.CSDgfp.CSDctrl <- lfcShrink(dds, coef="condition_CSD_GFP_LNP_vs_CSD_ctrl", type="apeglm")
+
+# MA plots
+plotMA(resLFC.CSDgfp.CSDctrl, ylim=c(-5,5), main = "CSD GFP-LNP ctrl vs CSD ctrl")
+
+# pval hist
+hist(resLFC.CSDgfp.CSDctrl[resLFC.CSDgfp.CSDctrl$baseMean > 1, "pvalue"], main = "P-value histogram CSD GFP-Lnp ctrl vs CSD ctrl", xlab = "p-value")
+
+# Save results
+res.CSDgfp.CSDctrl$AMEXID <- rownames(res.CSDgfp.CSDctrl)
+resLFC.CSDgfp.CSDctrl$AMEXID <- rownames(resLFC.CSDgfp.CSDctrl)
+results.CSDgfp.CSDctrl <- merge(as.data.frame(res.CSDgfp.CSDctrl), as.data.frame(resLFC.CSDgfp.CSDctrl)[, c("AMEXID", "log2FoldChange")], by = c("AMEXID"))
+results.CSDgfp.CSDctrl <- merge(results.CSDgfp.CSDctrl, gene_annotation, by = "AMEXID", all.x = TRUE)
+colnames(results.CSDgfp.CSDctrl) <- c("AMEXID", "baseMean", "log2FoldChange", "lfcSE", "stat", "pvalue", "padj", "log2FoldChange.shrinkage", "Symbol")
+results.CSDgfp.CSDctrl <- results.CSDgfp.CSDctrl[, c("AMEXID", "Symbol", "baseMean", "log2FoldChange", "lfcSE", "log2FoldChange.shrinkage", "stat", "pvalue", "padj")]
+write.csv(x = results.CSDgfp.CSDctrl, file = paste0(results_dir, "bulk_8day_deseq2_CSDgfp_vs_CSDctrl.csv"), quote = FALSE, row.names = FALSE, col.names = TRUE)
+```
+
+```{r deseq2_CSDgfp_BLctrl}
+# Set GFP as reference
+dds$condition <- relevel(dds$condition, ref = "Blastema_ctrl")
+
+dds <- DESeq(dds)
+
+res.CSDgfp.BLctrl <- results(dds, contrast = c("condition", "CSD_GFP_LNP", "Blastema_ctrl"), alpha = 0.05)
+summary(res.CSDgfp.BLctrl)
+
+# Log2FC shrinkage for plotting and ranking
+resLFC.CSDgfp.BLctrl <- lfcShrink(dds, coef="condition_CSD_GFP_LNP_vs_Blastema_ctrl", type="apeglm")
+
+# MA plots
+plotMA(resLFC.CSDgfp.BLctrl, ylim=c(-5,5), main = "CSD GFP-LNP ctrl vs Blastema ctrl")
+
+# pval hist
+hist(resLFC.CSDgfp.BLctrl[resLFC.CSDgfp.BLctrl$baseMean > 1, "pvalue"], main = "P-value histogram CSD GFP-Lnp ctrl vs Blastema ctrl", xlab = "p-value")
+
+# Save results
+res.CSDgfp.BLctrl$AMEXID <- rownames(res.CSDgfp.BLctrl)
+resLFC.CSDgfp.BLctrl$AMEXID <- rownames(resLFC.CSDgfp.BLctrl)
+results.CSDgfp.BLctrl <- merge(as.data.frame(res.CSDgfp.BLctrl), as.data.frame(resLFC.CSDgfp.BLctrl)[, c("AMEXID", "log2FoldChange")], by = c("AMEXID"))
+results.CSDgfp.BLctrl <- merge(results.CSDgfp.BLctrl, gene_annotation, by = "AMEXID", all.x = TRUE)
+colnames(results.CSDgfp.BLctrl) <- c("AMEXID", "baseMean", "log2FoldChange", "lfcSE", "stat", "pvalue", "padj", "log2FoldChange.shrinkage", "Symbol")
+results.CSDgfp.BLctrl <- results.CSDgfp.BLctrl[, c("AMEXID", "Symbol", "baseMean", "log2FoldChange", "lfcSE", "log2FoldChange.shrinkage", "stat", "pvalue", "padj")]
+write.csv(x = results.CSDgfp.BLctrl, file = paste0(results_dir, "bulk_8day_deseq2_CSDgfp_vs_BLctrl.csv"), quote = FALSE, row.names = FALSE, col.names = TRUE)
+```
+```{r sanity_check}
+boxplot(log10(assays(dds)[["cooks"]]), range=0, las=2, main = "Cook distances")
+plotDispEsts(dds, main = "Dispersion estimates")
+```
+
+
+```{r nr_degs}
+nr_degs_df <- data.frame(contrast = c("BLctr_vs_CSDctrl", "CSDwnt_vs_CSDgfp", "CSDwnt_vs_CSDctrl", "CSDwnt_vs_BLctrl", "CSDgfp_vs_CSDctrl", "CSDgfp_vs_BLctrl"),
+                         nr_degs = NA,
+                         nr_up_degs = NA,
+                         nr_down_degs = NA)
+
+all_results <- list(results.BLctr.CSDctrl,
+                    results.CSDwnt.CSDgfp,
+                    results.CSDwnt.CSDctrl,
+                    results.CSDwnt.BLctrl,
+                    results.CSDgfp.CSDctrl,
+                    results.CSDgfp.BLctrl)
+
+nr_degs_df$nr_degs <- sapply(all_results, function(x) x %>% filter(padj < 0.05) %>% nrow() )
+nr_degs_df$nr_up_degs <- sapply(all_results, function(x) x %>% filter(padj < 0.05) %>% filter(log2FoldChange > 0) %>% nrow())
+nr_degs_df$nr_down_degs <- sapply(all_results, function(x) x %>% filter(padj < 0.05) %>% filter(log2FoldChange < 0) %>% nrow())
+
+nr_degs_df <- reshape2::melt(nr_degs_df)
+
+ggplot(nr_degs_df, aes(x = value, y = contrast)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~ variable) +
+  theme_bw()
+```
+
+```{r plot_lef1}
+lef1_counts <- plotCounts(dds, gene = 'AMEX60DD044502', intgroup = "condition", returnData = TRUE)
+colnames(lef1_counts) <- c("LEF1", "condition")
+lef1_counts$sample_id <- rownames(lef1_counts)
+
+lef1_plot <- ggplot(lef1_counts, aes(x = condition, y = LEF1, color = condition, fill = condition)) +
+  geom_boxplot(alpha = 0.5)+
+  geom_point(position=position_jitter(w=0.1,h=0)) +
+  scale_color_manual(values = colors_conditions) +
+  scale_fill_manual(values = colors_conditions) +
+  theme_bw() +
+  xlab("Condition") + 
+  ylab("Normalized counts") +
+  ggtitle("LEF1 (AMEX60DD044502)")+
+  scale_y_continuous(limits = c(0, max(lef1_counts$LEF1) + 5)) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), plot.subtitle = element_text(hjust = 0.5), legend.position = "none")
+
+pdf(paste0(figs_dir, "bulk_8days_lef1_boxplot.pdf"), height = 3.5, width = 4.5)
+lef1_plot
+dev.off()
+
+lef1_plot
+```
+
+
+```{r plot_tcf7l2}
+tcf7l2_counts <- plotCounts(dds, gene = 'AMEX60DD053152', intgroup = "condition", returnData = TRUE)
+
+colnames(tcf7l2_counts) <- c("TCF7L2", "condition")
+tcf7l2_counts$sample_id <- rownames(tcf7l2_counts)
+
+tcf7l2_plot <- ggplot(tcf7l2_counts, aes(x = condition, y = TCF7L2, color = condition, fill = condition)) +
+  geom_boxplot(alpha = 0.5)+
+  geom_point(position=position_jitter(w=0.1,h=0)) +
+  scale_color_manual(values = colors_conditions) +
+  scale_fill_manual(values = colors_conditions) +
+  theme_bw() +
+  xlab("Condition") + 
+  ylab("Normalized counts") +
+  ggtitle("TCF7L2 (AMEX60DD053152)")+
+  scale_y_continuous(limits = c(0, max(tcf7l2_counts$TCF7L2) + 5)) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), plot.subtitle = element_text(hjust = 0.5), legend.position = "none")
+
+pdf(paste0(figs_dir, "bulk_8days_tcf7l2_boxplot.pdf"), height = 3.5, width = 4.5)
+tcf7l2_plot
+dev.off()
+
+tcf7l2_plot
+```
+```{r cpm}
+dge <- edgeR::DGEList(counts = counts(dds))
+dge <- edgeR::calcNormFactors(dge)
+logCPM <- edgeR::cpm(dge, log = TRUE)
+
+logCPM <- as.data.frame(logCPM)
+logCPM$AMEXID <- rownames(logCPM)
+
+lef1_logCPM <- logCPM %>% filter(AMEXID == "AMEX60DD044502")
+tcf7l2_logCPM <- logCPM %>% filter(AMEXID == "AMEX60DD053152")
+
+lef1_logCPM <-  reshape2::melt(lef1_logCPM)
+tcf7l2_logCPM <- reshape2::melt(tcf7l2_logCPM)
+
+colnames(lef1_logCPM) <- c("AMEXID", "sample_id", "logCPM")
+colnames(tcf7l2_logCPM) <- c("AMEXID", "sample_id", "logCPM")
+
+lef1_logCPM <- merge(lef1_logCPM, metadata, by = "sample_id")
+tcf7l2_logCPM <- merge(tcf7l2_logCPM, metadata, by = "sample_id")
+
+lef1_plot_logcpm <- ggplot(lef1_logCPM, aes(x = condition, y = logCPM, color = condition, fill = condition)) +
+  geom_boxplot(alpha = 0.5) +
+  geom_point(position=position_jitter(w=0.1,h=0)) +
+  scale_color_manual(values = colors_conditions) +
+  scale_fill_manual(values = colors_conditions) +
+  theme_bw() +
+  xlab("Condition") + 
+  ylab("logCPM") +
+  ggtitle("LEF1 (AMEX60DD044502)")+
+  scale_y_continuous(limits = c(0, max(lef1_logCPM$logCPM) + 0.5)) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), plot.subtitle = element_text(hjust = 0.5), legend.position = "none")
+
+tcf7l2_plot_logcpm <- ggplot(tcf7l2_logCPM, aes(x = condition, y = logCPM, color = condition, fill = condition)) +
+  geom_boxplot(alpha = 0.5)+
+  geom_point(position=position_jitter(w=0.1,h=0)) +
+  scale_color_manual(values = colors_conditions) +
+  scale_fill_manual(values = colors_conditions) +
+  theme_bw() +
+  xlab("Condition") + 
+  ylab("logCPM") +
+  ggtitle("TCF7L2 (AMEX60DD053152)")+
+  scale_y_continuous(limits = c(0, max(tcf7l2_logCPM$logCPM) + 0.5)) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), plot.subtitle = element_text(hjust = 0.5), legend.position = "none")
+
+pdf(paste0(figs_dir, "bulk_8days_lef1_boxplot_logCPM.pdf"), height = 3.5, width = 4.5)
+lef1_plot_logcpm
+dev.off()
+
+pdf(paste0(figs_dir, "bulk_8days_tcf7l2_boxplot_logCPM.pdf"), height = 3.5, width = 4.5)
+tcf7l2_plot_logcpm
+dev.off()
+
+lef1_plot_logcpm
+tcf7l2_plot_logcpm
+```
+
+
