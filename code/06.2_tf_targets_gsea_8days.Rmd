@@ -6,8 +6,7 @@ date: "2026-04-30"
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-knitr::opts_knit$set(root.dir = "/Volumes/INTENSO/PhD/axolotl_bone_grn/")
-# ~/NetVolumes/LAB_MT/RESULTADOS/Ines/Axolotl_Limb_Regeneration/
+knitr::opts_knit$set(root.dir = "~/NetVolumes/LAB_MT/RESULTADOS/Ines/Axolotl_Limb_Regeneration/")
 
 library(dplyr)
 library(ggplot2)
