@@ -137,6 +137,24 @@ dev.off()
 nes_bplot
 ```
 
+```{r dotplot}
+combined_df <- combined_df %>%
+  arrange(signature_group)  %>%
+  mutate(contrast = factor(contrast, levels = unique(contrast))) %>%
+  mutate(pathway = ifelse(pathway == "LEF1_activity", "LEF1", "TCF7L2"))
+
+nes_dotplot <- ggplot(combined_df, aes(x = pathway, y = contrast, size = -log10(padj), color = NES)) +
+  geom_point() +
+  theme_bw() +
+  scale_color_gradient2(high = "red", low ="blue", mid = "white") +
+
+pdf(paste0(figs_dir, "bulk_8days_fgsea_nes_dotplot.pdf"), height = 4, width = 4)
+nes_dotplot
+dev.off()
+
+nes_dotplot
+```
+
 ```{r pca_ranks}
 pca <- readRDS("Results/bulk_8days/bulk_8days_pca.rds")
 pca_weights <- pca$rotation

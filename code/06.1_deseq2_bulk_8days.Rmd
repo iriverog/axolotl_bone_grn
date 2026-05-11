@@ -6,7 +6,7 @@ date: "2026-04-30"
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-knitr::opts_knit$set(root.dir = "~/NetVolumes/LAB_MT/RESULTADOS/Ines/Axolotl_Limb_Regeneration/") 
+knitr::opts_knit$set(root.dir = "~/NetVolumes/LAB_MT/RESULTADOS/Ines/Axolotl_Limb_Regeneration/")
 
 library(RColorBrewer)
 library(dplyr)
@@ -16,6 +16,7 @@ library(circlize)
 library(ComplexHeatmap)
 library(ggrepel)
 library(fgsea)
+library(purrr)
 
 # Color palette for samples
 colors_conditions <- c("#7f7f7f", "forestgreen", "#EE6677", "#DDAA33")
@@ -357,7 +358,7 @@ plotDispEsts(dds, main = "Dispersion estimates")
 
 
 ```{r nr_degs}
-nr_degs_df <- data.frame(contrast = c("BLctr_vs_CSDctrl", "CSDwnt_vs_CSDgfp", "CSDwnt_vs_CSDctrl", "CSDwnt_vs_BLctrl", "CSDgfp_vs_CSDctrl", "CSDgfp_vs_BLctrl"),
+nr_degs_df <- data.frame(contrast = c("BLctrl_vs_CSDctrl", "CSDwnt_vs_CSDgfp", "CSDwnt_vs_CSDctrl", "CSDwnt_vs_BLctrl", "CSDgfp_vs_CSDctrl", "CSDgfp_vs_BLctrl"),
                          nr_degs = NA,
                          nr_up_degs = NA,
                          nr_down_degs = NA)
@@ -379,6 +380,89 @@ ggplot(nr_degs_df, aes(x = value, y = contrast)) +
   geom_bar(stat = "identity") +
   facet_wrap(~ variable) +
   theme_bw()
+```
+
+```{r nr_degs_hmap}
+df2 <- nr_degs_df %>%
+  tidyr::separate(contrast,
+           into = c("condition1", "condition2"),
+           sep = "_vs_")
+
+conds <- sort(unique(c(df2$condition1, df2$condition2)))
+
+make_matrix <- function(data, variable_name, conditions) {
+  mat <- matrix(NA,
+                nrow = length(conditions),
+                ncol = length(conditions),
+                dimnames = list(conditions, conditions))
+
+  tmp <- data %>%
+    filter(variable == variable_name)
+
+  for(i in seq_len(nrow(tmp))) {
+
+    r <- tmp$condition1[i]
+    c <- tmp$condition2[i]
+    v <- tmp$value[i]
+
+    mat[r, c] <- v
+    mat[c, r] <- v   # symmetric matrix
+  }
+
+  diag(mat) <- NA
+
+  return(mat)
+}
+
+nr_degs_matrix <- make_matrix(df2, "nr_degs", conditions = conds)
+nr_up_degs_matrix <- make_matrix(df2, "nr_up_degs", conditions = conds)
+nr_down_degs_matrix <- make_matrix(df2, "nr_down_degs", conditions = conds)
+
+plot_deg_heatmap <- function(mat, title, low_color = "white", high_color = "orange", show_legend = FALSE) {
+  col_fun <- colorRamp2(
+    c(min(0, na.rm = TRUE),
+      max(2000, na.rm = TRUE)),
+    c(low_color, high_color)
+  )
+
+  Heatmap(
+    mat,
+    name = title,
+    col = col_fun,
+    cluster_rows = FALSE,
+    cluster_columns = FALSE,
+    rect_gp = gpar(col = "black"),
+    show_heatmap_legend = show_legend,
+    cell_fun = function(j, i, x, y, width, height, fill) {
+      grid.text(
+        sprintf("%d", mat[i, j]),
+        x = x,
+        y = y,
+        gp = gpar(fontsize = 10)
+      )
+    },
+    row_names_side = "left",
+    column_names_rot = 45,
+    heatmap_legend_param = list(
+      title = title
+    ),
+    column_title = title
+  )
+}
+
+ht_nr_degs <- plot_deg_heatmap(nr_degs_matrix, title = "Total DEGs", show_legend = TRUE)
+
+ht_up <- plot_deg_heatmap(nr_up_degs_matrix, title = "Upregulated DEGs", show_legend = FALSE)
+
+ht_down <- plot_deg_heatmap(nr_down_degs_matrix, title = "Downregulated DEGs", show_legend = FALSE)
+
+hmap_plt <- draw(ht_nr_degs + ht_up + ht_down, 
+     heatmap_legend_side = "right"
+     )
+
+pdf(paste0(figs_dir, "bulk_8_days_nrdegs_hmap.pdf"), height = 3, width = 8)
+hmap_plt
+dev.off()
 ```
 
 ```{r plot_lef1}
@@ -430,6 +514,132 @@ dev.off()
 
 tcf7l2_plot
 ```
+
+```{r plot_jun}
+jun_counts <- plotCounts(dds, gene = 'AMEX60DD019448', intgroup = "condition", returnData = TRUE)
+
+colnames(jun_counts) <- c("JUN", "condition")
+jun_counts$sample_id <- rownames(jun_counts)
+
+jun_plot <- ggplot(jun_counts, aes(x = condition, y = JUN, color = condition, fill = condition)) +
+  geom_boxplot(alpha = 0.5)+
+  geom_point(position=position_jitter(w=0.1,h=0)) +
+  scale_color_manual(values = colors_conditions) +
+  scale_fill_manual(values = colors_conditions) +
+  theme_bw() +
+  xlab("Condition") + 
+  ylab("Normalized counts") +
+  ggtitle("JUN (AMEX60DD019448)")+
+  scale_y_continuous(limits = c(0, max(jun_counts$JUN) + 5)) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), plot.subtitle = element_text(hjust = 0.5), legend.position = "none")
+
+pdf(paste0(figs_dir, "bulk_8days_jun_boxplot.pdf"), height = 3.5, width = 4.5)
+jun_plot
+dev.off()
+
+jun_plot
+```
+
+```{r plot_jun2}
+jun2_counts <- plotCounts(dds, gene = 'AMEX60DD043789', intgroup = "condition", returnData = TRUE)
+
+colnames(jun2_counts) <- c("LOC108799893-JUN", "condition")
+jun2_counts$sample_id <- rownames(jun2_counts)
+
+jun2_plot <- ggplot(jun2_counts, aes(x = condition, y = `LOC108799893-JUN`, color = condition, fill = condition)) +
+  geom_boxplot(alpha = 0.5)+
+  geom_point(position=position_jitter(w=0.1,h=0)) +
+  scale_color_manual(values = colors_conditions) +
+  scale_fill_manual(values = colors_conditions) +
+  theme_bw() +
+  xlab("Condition") + 
+  ylab("Normalized counts") +
+  ggtitle("LOC108799893-JUN (AMEX60DD043789)")+
+  scale_y_continuous(limits = c(0, max(jun2_counts$`LOC108799893-JUN`) + 5)) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), plot.subtitle = element_text(hjust = 0.5), legend.position = "none")
+
+pdf(paste0(figs_dir, "bulk_8days_loc108799893-jun_boxplot.pdf"), height = 3.5, width = 4.5)
+jun2_plot
+dev.off()
+
+jun2_plot
+```
+
+```{r plot_junb}
+junb_counts <- plotCounts(dds, gene = 'AMEX60DD031925', intgroup = "condition", returnData = TRUE)
+
+colnames(junb_counts) <- c("JUNB", "condition")
+junb_counts$sample_id <- rownames(junb_counts)
+
+junb_plot <- ggplot(junb_counts, aes(x = condition, y = JUNB, color = condition, fill = condition)) +
+  geom_boxplot(alpha = 0.5)+
+  geom_point(position=position_jitter(w=0.1,h=0)) +
+  scale_color_manual(values = colors_conditions) +
+  scale_fill_manual(values = colors_conditions) +
+  theme_bw() +
+  xlab("Condition") + 
+  ylab("Normalized counts") +
+  ggtitle("JUNB (AMEX60DD031925)")+
+  scale_y_continuous(limits = c(0, max(junb_counts$JUNB) + 5)) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), plot.subtitle = element_text(hjust = 0.5), legend.position = "none")
+
+pdf(paste0(figs_dir, "bulk_8days_junb_boxplot.pdf"), height = 3.5, width = 4.5)
+junb_plot
+dev.off()
+
+junb_plot
+```
+
+```{r plot_jund}
+jund_counts <- plotCounts(dds, gene = 'AMEX60DD014112', intgroup = "condition", returnData = TRUE)
+
+colnames(jund_counts) <- c("JUND", "condition")
+jund_counts$sample_id <- rownames(jund_counts)
+
+jund_plot <- ggplot(jund_counts, aes(x = condition, y = JUND, color = condition, fill = condition)) +
+  geom_boxplot(alpha = 0.5)+
+  geom_point(position=position_jitter(w=0.1,h=0)) +
+  scale_color_manual(values = colors_conditions) +
+  scale_fill_manual(values = colors_conditions) +
+  theme_bw() +
+  xlab("Condition") + 
+  ylab("Normalized counts") +
+  ggtitle("JUND (AMEX60DD014112)")+
+  scale_y_continuous(limits = c(0, max(jund_counts$JUND) + 5)) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), plot.subtitle = element_text(hjust = 0.5), legend.position = "none")
+
+pdf(paste0(figs_dir, "bulk_8days_jund_boxplot.pdf"), height = 3.5, width = 4.5)
+jund_plot
+dev.off()
+
+jund_plot
+```
+
+```{r plot_myc}
+myc_counts <- plotCounts(dds, gene = 'AMEX60DD040490', intgroup = "condition", returnData = TRUE)
+
+colnames(myc_counts) <- c("MYC", "condition")
+myc_counts$sample_id <- rownames(myc_counts)
+
+myc_plot <- ggplot(myc_counts, aes(x = condition, y = MYC, color = condition, fill = condition)) +
+  geom_boxplot(alpha = 0.5)+
+  geom_point(position=position_jitter(w=0.1,h=0)) +
+  scale_color_manual(values = colors_conditions) +
+  scale_fill_manual(values = colors_conditions) +
+  theme_bw() +
+  xlab("Condition") + 
+  ylab("Normalized counts") +
+  ggtitle("MYC (AMEX60DD040490)")+
+  scale_y_continuous(limits = c(0, max(myc_counts$MYC) + 5)) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), plot.subtitle = element_text(hjust = 0.5), legend.position = "none")
+
+pdf(paste0(figs_dir, "bulk_8days_myc_boxplot.pdf"), height = 3.5, width = 4.5)
+myc_plot
+dev.off()
+
+myc_plot
+```
+
 ```{r cpm}
 dge <- edgeR::DGEList(counts = counts(dds))
 dge <- edgeR::calcNormFactors(dge)
@@ -440,15 +650,23 @@ logCPM$AMEXID <- rownames(logCPM)
 
 lef1_logCPM <- logCPM %>% filter(AMEXID == "AMEX60DD044502")
 tcf7l2_logCPM <- logCPM %>% filter(AMEXID == "AMEX60DD053152")
+myc_logCPM <- logCPM %>% filter(AMEXID == "AMEX60DD040490")
+jun_logCPM <- logCPM %>% filter(AMEXID == "AMEX60DD019448")
 
 lef1_logCPM <-  reshape2::melt(lef1_logCPM)
 tcf7l2_logCPM <- reshape2::melt(tcf7l2_logCPM)
+myc_logCPM <- reshape2::melt(myc_logCPM)
+jun_logCPM <- reshape2::melt(jun_logCPM)
 
 colnames(lef1_logCPM) <- c("AMEXID", "sample_id", "logCPM")
 colnames(tcf7l2_logCPM) <- c("AMEXID", "sample_id", "logCPM")
+colnames(myc_logCPM) <- c("AMEXID", "sample_id", "logCPM")
+colnames(jun_logCPM) <- c("AMEXID", "sample_id", "logCPM")
 
 lef1_logCPM <- merge(lef1_logCPM, metadata, by = "sample_id")
 tcf7l2_logCPM <- merge(tcf7l2_logCPM, metadata, by = "sample_id")
+myc_logCPM <- merge(myc_logCPM, metadata, by = "sample_id")
+jun_logCPM <- merge(jun_logCPM, metadata, by = "sample_id")
 
 lef1_plot_logcpm <- ggplot(lef1_logCPM, aes(x = condition, y = logCPM, color = condition, fill = condition)) +
   geom_boxplot(alpha = 0.5) +
@@ -474,6 +692,30 @@ tcf7l2_plot_logcpm <- ggplot(tcf7l2_logCPM, aes(x = condition, y = logCPM, color
   scale_y_continuous(limits = c(0, max(tcf7l2_logCPM$logCPM) + 0.5)) +
   theme(plot.title = element_text(hjust = 0.5, face = "bold"), plot.subtitle = element_text(hjust = 0.5), legend.position = "none")
 
+myc_plot_logcpm <- ggplot(myc_logCPM, aes(x = condition, y = logCPM, color = condition, fill = condition)) +
+  geom_boxplot(alpha = 0.5)+
+  geom_point(position=position_jitter(w=0.1,h=0)) +
+  scale_color_manual(values = colors_conditions) +
+  scale_fill_manual(values = colors_conditions) +
+  theme_bw() +
+  xlab("Condition") + 
+  ylab("logCPM") +
+  ggtitle("MYC (AMEX60DD040490)")+
+  scale_y_continuous(limits = c(0, max(myc_logCPM$logCPM) + 0.5)) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), plot.subtitle = element_text(hjust = 0.5), legend.position = "none")
+
+jun_plot_logcpm <- ggplot(jun_logCPM, aes(x = condition, y = logCPM, color = condition, fill = condition)) +
+  geom_boxplot(alpha = 0.5)+
+  geom_point(position=position_jitter(w=0.1,h=0)) +
+  scale_color_manual(values = colors_conditions) +
+  scale_fill_manual(values = colors_conditions) +
+  theme_bw() +
+  xlab("Condition") + 
+  ylab("logCPM") +
+  ggtitle("JUN (AMEX60DD019448)")+
+  scale_y_continuous(limits = c(0, max(jun_logCPM$logCPM) + 0.5)) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), plot.subtitle = element_text(hjust = 0.5), legend.position = "none")
+
 pdf(paste0(figs_dir, "bulk_8days_lef1_boxplot_logCPM.pdf"), height = 3.5, width = 4.5)
 lef1_plot_logcpm
 dev.off()
@@ -482,8 +724,72 @@ pdf(paste0(figs_dir, "bulk_8days_tcf7l2_boxplot_logCPM.pdf"), height = 3.5, widt
 tcf7l2_plot_logcpm
 dev.off()
 
+pdf(paste0(figs_dir, "bulk_8days_myc_boxplot_logCPM.pdf"), height = 3.5, width = 4.5)
+myc_plot_logcpm
+dev.off()
+
+pdf(paste0(figs_dir, "bulk_8days_jun_boxplot_logCPM.pdf"), height = 3.5, width = 4.5)
+jun_plot_logcpm
+dev.off()
+
 lef1_plot_logcpm
 tcf7l2_plot_logcpm
+myc_plot_logcpm
+jun_plot_logcpm
 ```
 
+```{r hmap_lef1_tcf7l2}
+dge <- edgeR::DGEList(counts = counts(dds))
+dge <- edgeR::calcNormFactors(dge)
+logCPM <- edgeR::cpm(dge, log = TRUE)
+scaled_mat <- t(scale(t(logCPM)))
+hmap_mat <- scaled_mat[c("AMEX60DD044502", "AMEX60DD053152"), ]
 
+sample_anno <- as.data.frame(metadata[, "condition"])
+colnames(sample_anno) <- "condition"
+
+top_ha <- HeatmapAnnotation(df = sample_anno,
+                            col = list(condition = colors_conditions))
+
+tfs_hmap <- Heatmap(hmap_mat, 
+        top_annotation = top_ha,
+        show_column_names = FALSE,
+        cluster_rows = FALSE,
+        heatmap_legend_param = list(title = "Z-score"), 
+        row_labels = c("LEF1", "TCF7L2")
+)
+
+pdf(paste0(figs_dir, "bulk_8days_lef1-tcf7l2_hmap.pdf"), height = 3, width = 4)
+draw(tfs_hmap, merge_legends = TRUE, heatmap_legend_side = "right",annotation_legend_side = "right")
+dev.off()
+
+tfs_hmap
+```
+
+```{r hmap_reviewer_tfs}
+dge <- edgeR::DGEList(counts = counts(dds))
+dge <- edgeR::calcNormFactors(dge)
+logCPM <- edgeR::cpm(dge, log = TRUE)
+scaled_mat <- t(scale(t(logCPM)))
+hmap_mat <- scaled_mat[c("AMEX60DD044502", "AMEX60DD053152", "AMEX60DD040490", "AMEX60DD019448"), ]
+
+sample_anno <- as.data.frame(metadata[, "condition"])
+colnames(sample_anno) <- "condition"
+
+top_ha <- HeatmapAnnotation(df = sample_anno,
+                            col = list(condition = colors_conditions))
+
+tfs_hmap <- Heatmap(hmap_mat, 
+        top_annotation = top_ha,
+        show_column_names = FALSE,
+        cluster_rows = FALSE,
+        heatmap_legend_param = list(title = "Z-score"), 
+        row_labels = c("LEF1", "TCF7L2", "MYC", "JUN")
+)
+
+pdf(paste0(figs_dir, "bulk_8days_lef1-tcf7l2-myc-jun_hmap.pdf"), height = 3, width = 4)
+draw(tfs_hmap, merge_legends = TRUE, heatmap_legend_side = "right",annotation_legend_side = "right")
+dev.off()
+
+tfs_hmap
+```
